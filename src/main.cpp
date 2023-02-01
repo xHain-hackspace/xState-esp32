@@ -1,7 +1,9 @@
+#include "beep.h"
 #include "config.h"
 #include <Arduino.h>
 #include <ArduinoMqttClient.h>
 #include <WiFi.h>
+#include <pwmWrite.h>
 
 const uint8_t SW_OPEN = GPIO_NUM_34;
 const uint8_t SW_MEMBER = GPIO_NUM_33;
@@ -34,17 +36,14 @@ volatile bool localChange = false;
 void setSpaceMembersOnly() {
   state = spaceMembersOnly;
   localChange = true;
-  Serial.println("member");
 }
 void setSpaceOpen() {
   state = spaceOpen;
   localChange = true;
-  Serial.println("open");
 }
 void setSpaceClosed() {
   state = spaceClosed;
   localChange = true;
-  Serial.println("close");
 }
 
 void onMqttMessage(int messageSize) {
@@ -88,7 +87,8 @@ void setup() {
   pinMode(SW_MEMBER, INPUT);
   pinMode(SW_CLOSE, INPUT);
 
-  /* ------------------------------- setup wifi ----------------------------- */
+  /* ------------------------------- setup wifi
+     ----------------------------- */
   delay(10);
   // We start by connecting to a WiFi network
   Serial.println();
@@ -168,6 +168,19 @@ void updateLEDs(spaceState_t s) {
     break;
   }
 }
+void playSound(spaceState_t s) {
+  switch (s) {
+  case spaceOpen:
+    playOpen();
+    break;
+  case spaceClosed:
+    playClose();
+    break;
+  case spaceMembersOnly:
+    playMember();
+    break;
+  }
+}
 
 void loop() {
   if (lastState != state) {
@@ -182,6 +195,7 @@ void loop() {
       localChange = false;
     }
     updateLEDs(state);
+    playSound(state);
     lastState = state;
   }
   mqttClient.poll();
