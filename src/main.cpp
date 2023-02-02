@@ -1,38 +1,19 @@
 #include "beep.h"
 #include "config.h"
+#include "state.h"
+#include "util.h"
 #include <Arduino.h>
 #include <ArduinoMqttClient.h>
 #include <WiFi.h>
-#include <pwmWrite.h>
-
-const uint8_t SW_OPEN = GPIO_NUM_34;
-const uint8_t SW_MEMBER = GPIO_NUM_33;
-const uint8_t SW_CLOSE = GPIO_NUM_35;
-
-const uint8_t LED_GREEN = GPIO_NUM_32;
-const uint8_t LED_RED = GPIO_NUM_25;
-const uint8_t LED_YELLOW = GPIO_NUM_27;
-
-const char spaceOpenStr[] = "open";
-const char spaceClosedStr[] = "closed";
-const char spaceMembersOnlyStr[] = "membersOnly";
-
-void blinkLED(uint8_t pin, uint16_t d) {
-  digitalWrite(pin, HIGH);
-  delay(d);
-  digitalWrite(pin, LOW);
-  delay(d);
-}
 
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
-
-enum spaceState_t { spaceUndefined, spaceOpen, spaceClosed, spaceMembersOnly };
 
 volatile spaceState_t state = spaceUndefined;
 volatile spaceState_t lastState = spaceUndefined;
 volatile bool localChange = false;
 
+/* ----------------------------- util functions --------------------------- */
 void setSpaceMembersOnly() {
   state = spaceMembersOnly;
   localChange = true;
@@ -46,24 +27,50 @@ void setSpaceClosed() {
   localChange = true;
 }
 
+void setupPins() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_RED, OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(SW_OPEN, INPUT);
+  pinMode(SW_MEMBER, INPUT);
+  pinMode(SW_CLOSE, INPUT);
+  pinMode(BUZZER, OUTPUT);
+}
+
+/* ----------------------------- mqtt functions --------------------------- */
+void setupMQTT() {
+  Serial.print("Connecting to MQTT broker: ");
+  Serial.println(mqttBroker);
+
+  if (!mqttClient.connect(mqttBroker, mqttPort)) {
+    Serial.print("MQTT connection failed! Error code = ");
+    Serial.println(mqttClient.connectError());
+    displayErrorLoop(LED_BUILTIN);
+  }
+
+  Serial.println("Connected to MQTT broker");
+  Serial.println();
+  digitalWrite(LED_BUILTIN, HIGH); // signal connection
+}
+
+void publishState(spaceState_t s) {
+  mqttClient.beginMessage(spaceStateTopic, true);
+  mqttClient.print(stateToString(s));
+  mqttClient.endMessage();
+}
+
 void onMqttMessage(int messageSize) {
-  // we received a message, print out the topic and contents
   Serial.print("Received a message with topic '");
   Serial.print(mqttClient.messageTopic());
-  Serial.println("'");
-
-  // use the Stream interface to print the contents
+  Serial.print("': ");
   char msg[50] = {};
   int p = 0;
   while (mqttClient.available()) {
     msg[p] = (char)mqttClient.read();
     p++;
   }
-  // auto msg = mqttClient.readString().c_str();
-  Serial.print("Value: '");
-  Serial.print(msg);
-  Serial.println("'");
-  Serial.print("Setting state from MQTT to: ");
+  Serial.println(msg);
   if (strcmp(msg, spaceOpenStr) == 0) {
     state = spaceOpen;
     Serial.println(spaceOpen);
@@ -76,77 +83,40 @@ void onMqttMessage(int messageSize) {
   }
 }
 
-void setup() {
-  Serial.begin(115200);
-  // put your setup code here, to run once:
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(LED_GREEN, OUTPUT);
-  pinMode(LED_RED, OUTPUT);
-  pinMode(LED_YELLOW, OUTPUT);
-  pinMode(SW_OPEN, INPUT);
-  pinMode(SW_MEMBER, INPUT);
-  pinMode(SW_CLOSE, INPUT);
+/* ----------------------------- wifi functions --------------------------- */
 
-  /* ------------------------------- setup wifi
-     ----------------------------- */
+void setupWifi() {
   delay(10);
-  // We start by connecting to a WiFi network
   Serial.println();
   Serial.print("Connecting to Wifi: ");
   Serial.println(wifiSSID);
 
   WiFi.begin(wifiSSID, wifiPass);
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    blinkLED(LED_BUILTIN, 250);
     Serial.print(".");
   }
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
-
-  /* ---------------------------------- mqtt -------------------------------- */
-  Serial.print("Connecting to MQTT broker: ");
-  Serial.println(mqttBroker);
-
-  if (!mqttClient.connect(mqttBroker, mqttPort)) {
-
-    Serial.print("MQTT connection failed! Error code = ");
-
-    Serial.println(mqttClient.connectError());
-
-    while (1)
-      ;
-  }
-
-  Serial.println("Connected to MQTT broker");
-  digitalWrite(LED_BUILTIN, HIGH);
   Serial.println();
-  Serial.println("Reading last state...");
+}
+
+void setup() {
+  Serial.begin(115200);
+  setupPins();
+  setupWifi();
+  setupMQTT();
 
   // monitor topic
   mqttClient.onMessage(onMqttMessage);
   mqttClient.subscribe(spaceStateTopic);
 
+  /* ------------------------------- interrupts ----------------------------- */
   attachInterrupt(SW_OPEN, setSpaceOpen, FALLING);
   attachInterrupt(SW_MEMBER, setSpaceMembersOnly, FALLING);
   attachInterrupt(SW_CLOSE, setSpaceClosed, FALLING);
-}
-
-void publishState(spaceState_t s) {
-  mqttClient.beginMessage(spaceStateTopic, true);
-  switch (s) {
-  case spaceOpen:
-    mqttClient.print(spaceOpenStr);
-    break;
-  case spaceClosed:
-    mqttClient.print(spaceClosedStr);
-    break;
-  case spaceMembersOnly:
-    mqttClient.print(spaceMembersOnlyStr);
-    break;
-  }
-  mqttClient.endMessage();
 }
 
 void updateLEDs(spaceState_t s) {
@@ -171,31 +141,30 @@ void updateLEDs(spaceState_t s) {
 void playSound(spaceState_t s) {
   switch (s) {
   case spaceOpen:
-    playOpen();
+    playOpen(BUZZER);
     break;
   case spaceClosed:
-    playClose();
+    playClose(BUZZER);
     break;
   case spaceMembersOnly:
-    playMember();
+    playMember(BUZZER);
     break;
   }
 }
 
 void loop() {
   if (lastState != state) {
-    Serial.print("Last state: ");
-    Serial.println(lastState);
-    Serial.print("State: ");
-    Serial.println(state);
-
+    Serial.printf("Transition from %s to %s.", stateToString(lastState),
+                  stateToString(state));
+    // check if change needs to be published
     if (localChange) {
-      Serial.println("publish...");
       publishState(state);
       localChange = false;
     }
+    // update LEDs and play sound
     updateLEDs(state);
     playSound(state);
+    // store state
     lastState = state;
   }
   mqttClient.poll();
