@@ -154,7 +154,7 @@ void playSound(spaceState_t s) {
 
 void loop() {
   if (lastState != state) {
-    Serial.printf("Transition from %s to %s.", stateToString(lastState),
+    Serial.printf("Transition from %s to %s.\n", stateToString(lastState),
                   stateToString(state));
     // check if change needs to be published
     if (localChange) {
