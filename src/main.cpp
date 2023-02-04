@@ -2,9 +2,13 @@
 #include "config.h"
 #include "state.h"
 #include "util.h"
+#include "voice_closed.h"
+#include "voice_members.h"
+#include "voice_open.h"
 #include <Arduino.h>
 #include <ArduinoMqttClient.h>
 #include <WiFi.h>
+#include <XT_DAC_Audio.h>
 
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
@@ -13,7 +17,14 @@ volatile spaceState_t state = spaceUndefined;
 volatile spaceState_t lastState = spaceUndefined;
 volatile bool localChange = false;
 
-/* ----------------------------- util functions --------------------------- */
+// Audio
+XT_DAC_Audio_Class audioPlayer(26, 0);
+XT_Wav_Class voiceOpen(voice_open);
+XT_Wav_Class voiceMembers(voice_members);
+XT_Wav_Class voiceClosed(voice_closed);
+
+/* ----------------------------- util functions ---------------------------
+ */
 void setSpaceMembersOnly() {
   state = spaceMembersOnly;
   localChange = true;
@@ -152,7 +163,22 @@ void playSound(spaceState_t s) {
   }
 }
 
+void outputVoice(spaceState_t s) {
+  switch (s) {
+  case spaceOpen:
+    audioPlayer.Play(&voiceOpen);
+    break;
+  case spaceClosed:
+    audioPlayer.Play(&voiceClosed);
+    break;
+  case spaceMembersOnly:
+    audioPlayer.Play(&voiceMembers);
+    break;
+  }
+}
+
 void loop() {
+  audioPlayer.FillBuffer();
   if (lastState != state) {
     Serial.printf("Transition from %s to %s.\n", stateToString(lastState),
                   stateToString(state));
@@ -163,7 +189,8 @@ void loop() {
     }
     // update LEDs and play sound
     updateLEDs(state);
-    playSound(state);
+    // playSound(state);
+    outputVoice(state);
     // store state
     lastState = state;
   }
