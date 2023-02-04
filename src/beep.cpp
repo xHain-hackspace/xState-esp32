@@ -9,7 +9,7 @@ void playClose(uint8_t pin) {
   delay(timeBetweenBeeps);
   tone(pin, 500, beepLen);
   noTone(pin);
-  delay(timeBetweenBeeps);
+  digitalWrite(pin, LOW);
 }
 void playOpen(uint8_t pin) {
   tone(pin, 500, beepLen);
@@ -20,7 +20,7 @@ void playOpen(uint8_t pin) {
   delay(timeBetweenBeeps);
   tone(pin, 1000, beepLen);
   noTone(pin);
-  delay(timeBetweenBeeps);
+  digitalWrite(pin, LOW);
 }
 void playMember(uint8_t pin) {
   tone(pin, 500, beepLen * 2);
@@ -31,5 +31,5 @@ void playMember(uint8_t pin) {
   delay(timeBetweenBeeps);
   tone(pin, 500, beepLen * 2);
   noTone(pin);
-  delay(timeBetweenBeeps * 2);
+  digitalWrite(pin, LOW);
 }
