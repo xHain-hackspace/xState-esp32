@@ -23,13 +23,13 @@ void playOpen(uint8_t pin) {
   delay(timeBetweenBeeps);
 }
 void playMember(uint8_t pin) {
-  tone(pin, 500, beepLen);
+  tone(pin, 500, beepLen * 2);
   noTone(pin);
-  delay(timeBetweenBeeps);
+  delay(timeBetweenBeeps * 2);
   tone(pin, 1000, beepLen);
   noTone(pin);
   delay(timeBetweenBeeps);
-  tone(pin, 500, beepLen);
+  tone(pin, 500, beepLen * 2);
   noTone(pin);
-  delay(timeBetweenBeeps);
+  delay(timeBetweenBeeps * 2);
 }
