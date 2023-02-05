@@ -1,10 +1,8 @@
 #include "beep.h"
 #include "config.h"
+#include "gen_voice_data.h"
 #include "state.h"
 #include "util.h"
-#include "voice_closed.h"
-#include "voice_members.h"
-#include "voice_open.h"
 #include <Arduino.h>
 #include <ArduinoMqttClient.h>
 #include <WiFi.h>
