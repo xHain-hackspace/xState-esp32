@@ -5,7 +5,7 @@ FILE_PREFIX=gen
 OUTPUT_DIR=./include
 
 render_wav() {
-  say "${1}" -r 210 --data-format=UI8@16000 --channels=1 -o "${2}"
+  say "${1}" -r 210 --data-format=I16@44100 --channels=1 -o "${2}"
 }
 
 output_header() {
@@ -22,7 +22,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   exit 1
 fi
   
-TMP_DIR=$(mktemp -d)
+TMP_DIR=.
 
 render_wav "x-hein is open" "${TMP_DIR}/open.wav"
 render_wav "x-hein is open for members" "${TMP_DIR}/members.wav"
@@ -35,4 +35,4 @@ output_header "voice_closed" "${TMP_DIR}/closed.wav" "${OUTPUT_DIR}/gen_voice_cl
 # render meta header
 echo -e '#pragma once\n\n#include "gen_voice_open.h"\n#include "gen_voice_members.h"\n#include "gen_voice_closed.h"\n' > "${OUTPUT_DIR}/gen_voice_data.h"
 
-rm -r "${TMP_DIR}"
+# rm -r "${TMP_DIR}"

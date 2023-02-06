@@ -1,13 +1,15 @@
-#include "beep.h"
 #include "config.h"
-#include "gen_voice_data.h"
 #include "state.h"
 #include "util.h"
 #include <Arduino.h>
 #include <ArduinoMqttClient.h>
+#include <Audio.h>
+#include <FS.h>
+#include <SD.h>
+#include <SPI.h>
 #include <WiFi.h>
-#include <XT_DAC_Audio.h>
 
+/* ---------------------------- global variables -------------------------- */
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 
@@ -15,14 +17,121 @@ volatile spaceState_t state = spaceUndefined;
 volatile spaceState_t lastState = spaceUndefined;
 volatile bool localChange = false;
 
-// Audio
-XT_DAC_Audio_Class audioPlayer(26, 0);
-XT_Wav_Class voiceOpen(voice_open);
-XT_Wav_Class voiceMembers(voice_members);
-XT_Wav_Class voiceClosed(voice_closed);
+//****************************************************************************************
+//                                   A U D I O _ T A S K *
+//****************************************************************************************
+Audio audio(true, I2S_DAC_CHANNEL_BOTH_EN);
 
-/* ----------------------------- util functions ---------------------------
- */
+struct audioMessage {
+  uint8_t cmd;
+  const char *txt;
+  uint32_t value;
+  uint32_t ret;
+} audioTxMessage, audioRxMessage;
+
+enum : uint8_t {
+  SET_VOLUME,
+  GET_VOLUME,
+  CONNECTTOHOST,
+  CONNECTTOSD,
+  CONNTECTTOTTS
+};
+
+QueueHandle_t audioSetQueue = NULL;
+QueueHandle_t audioGetQueue = NULL;
+
+void CreateQueues() {
+  audioSetQueue = xQueueCreate(10, sizeof(struct audioMessage));
+  audioGetQueue = xQueueCreate(10, sizeof(struct audioMessage));
+}
+
+void audioTask(void *parameter) {
+  CreateQueues();
+  if (!audioSetQueue || !audioGetQueue) {
+    log_e("queues are not initialized");
+    while (true) {
+      ;
+    } // endless loop
+  }
+
+  struct audioMessage audioRxTaskMessage;
+  struct audioMessage audioTxTaskMessage;
+
+  audio.setVolume(21); // 0...21
+
+  while (true) {
+    if (xQueueReceive(audioSetQueue, &audioRxTaskMessage, 1) == pdPASS) {
+      if (audioRxTaskMessage.cmd == SET_VOLUME) {
+        audioTxTaskMessage.cmd = SET_VOLUME;
+        audio.setVolume(audioRxTaskMessage.value);
+        audioTxTaskMessage.ret = 1;
+        xQueueSend(audioGetQueue, &audioTxTaskMessage, portMAX_DELAY);
+      } else if (audioRxTaskMessage.cmd == CONNECTTOSD) {
+        audioTxTaskMessage.cmd = CONNECTTOSD;
+        audioTxTaskMessage.ret = audio.connecttoSD(audioRxTaskMessage.txt);
+        xQueueSend(audioGetQueue, &audioTxTaskMessage, portMAX_DELAY);
+      } else if (audioRxTaskMessage.cmd == CONNTECTTOTTS) {
+        audioTxTaskMessage.cmd = CONNTECTTOTTS;
+        audioTxTaskMessage.ret =
+            audio.connecttospeech(audioRxTaskMessage.txt, "en");
+      } else {
+        log_i("error");
+      }
+    }
+    audio.loop();
+  }
+}
+
+void setupAudio() {
+  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+  SD.begin(SD_CS);
+  xTaskCreatePinnedToCore(audioTask,   /* Function to implement the task */
+                          "audioplay", /* Name of the task */
+                          5000,        /* Stack size in words */
+                          NULL,        /* Task input parameter */
+                          2 | portPRIVILEGE_BIT, /* Priority of the task */
+                          NULL,                  /* Task handle. */
+                          0 /* Core where the task should run */
+  );
+}
+
+audioMessage transmitReceive(audioMessage msg) {
+  xQueueSend(audioSetQueue, &msg, portMAX_DELAY);
+  if (xQueueReceive(audioGetQueue, &audioRxMessage, portMAX_DELAY) == pdPASS) {
+    if (msg.cmd != audioRxMessage.cmd) {
+      log_e("wrong reply from message queue");
+    }
+  }
+  return audioRxMessage;
+}
+
+void audioSetVolume(uint8_t vol) {
+  audioTxMessage.cmd = SET_VOLUME;
+  audioTxMessage.value = vol;
+  audioMessage RX = transmitReceive(audioTxMessage);
+}
+
+bool audioConnecttohost(const char *host) {
+  audioTxMessage.cmd = CONNECTTOHOST;
+  audioTxMessage.txt = host;
+  audioMessage RX = transmitReceive(audioTxMessage);
+  return RX.ret;
+}
+
+bool audioConnecttoSD(const char *filename) {
+  audioTxMessage.cmd = CONNECTTOSD;
+  audioTxMessage.txt = filename;
+  audioMessage RX = transmitReceive(audioTxMessage);
+  return RX.ret;
+}
+bool audioConnecttoSpeech(const char *txt) {
+  audioTxMessage.cmd = CONNTECTTOTTS;
+  audioTxMessage.txt = txt;
+  audioMessage RX = transmitReceive(audioTxMessage);
+  return RX.ret;
+}
+
+/* ----------------------------- util functions --------------------------- */
 void setSpaceMembersOnly() {
   state = spaceMembersOnly;
   localChange = true;
@@ -112,8 +221,15 @@ void setupWifi() {
   Serial.println();
 }
 
+//****************************************************************************************
+//                                   S E T U P *
+//****************************************************************************************
+
 void setup() {
   Serial.begin(115200);
+  Serial.print("Setup: Executing on core ");
+  Serial.println(xPortGetCoreID());
+  setupAudio();
   setupPins();
   setupWifi();
   setupMQTT();
@@ -147,36 +263,32 @@ void updateLEDs(spaceState_t s) {
     break;
   }
 }
-void playSound(spaceState_t s) {
-  switch (s) {
-  case spaceOpen:
-    playOpen(BUZZER);
-    break;
-  case spaceClosed:
-    playClose(BUZZER);
-    break;
-  case spaceMembersOnly:
-    playMember(BUZZER);
-    break;
-  }
-}
 
 void outputVoice(spaceState_t s) {
   switch (s) {
   case spaceOpen:
-    audioPlayer.Play(&voiceOpen);
+    audioConnecttoSD("/open.wav");
     break;
   case spaceClosed:
-    audioPlayer.Play(&voiceClosed);
+    audioConnecttoSD("/closed.wav");
     break;
   case spaceMembersOnly:
-    audioPlayer.Play(&voiceMembers);
+    audioConnecttoSD("/members.wav");
     break;
   }
 }
 
+//****************************************************************************************
+//                                   L O O P *
+//****************************************************************************************
+
 void loop() {
-  audioPlayer.FillBuffer();
+  static bool once = true;
+  if (once) {
+    Serial.print("Loop: Executing on core ");
+    Serial.println(xPortGetCoreID());
+    once = false;
+  }
   if (lastState != state) {
     Serial.printf("Transition from %s to %s.\n", stateToString(lastState),
                   stateToString(state));
@@ -187,10 +299,18 @@ void loop() {
     }
     // update LEDs and play sound
     updateLEDs(state);
-    // playSound(state);
     outputVoice(state);
     // store state
     lastState = state;
   }
   mqttClient.poll();
+}
+
+//*****************************************************************************************
+//                                  E V E N T S *
+//*****************************************************************************************
+
+void audio_info(const char *info) {
+  Serial.print("audio: ");
+  Serial.println(info);
 }

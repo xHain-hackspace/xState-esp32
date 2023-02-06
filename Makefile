@@ -5,8 +5,8 @@ PIO=pio
 generate:
 	./generate_voice_cmd.sh
 
-build: generate
-	pio run --disable-auto-clean
+build:
+	pio run
 
 upload: generate
 	pio run --disable-auto-clean -t upload
