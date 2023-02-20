@@ -155,6 +155,7 @@ void setupOTA() {
           Serial.println("End Failed");
       });
 
+  ArduinoOTA.setPassword(otaPass);
   ArduinoOTA.begin();
 }
 
