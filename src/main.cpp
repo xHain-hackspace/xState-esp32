@@ -4,12 +4,16 @@
 #include "state.h"
 #include "util.h"
 #include <Arduino.h>
-#include <ArduinoMqttClient.h>
+#include <ArduinoHA.h>
+#include <ArduinoOTA.h>
+#include <Bounce2.h>
 #include <WiFi.h>
 #include <XT_DAC_Audio.h>
 
 WiFiClient wifiClient;
-MqttClient mqttClient(wifiClient);
+HADevice haDevice;
+HAMqtt mqtt(wifiClient, haDevice);
+HASelect xState("xState");
 
 volatile spaceState_t state = spaceUndefined;
 volatile spaceState_t lastState = spaceUndefined;
@@ -21,8 +25,35 @@ XT_Wav_Class voiceOpen(voice_open);
 XT_Wav_Class voiceMembers(voice_members);
 XT_Wav_Class voiceClosed(voice_closed);
 
-/* ----------------------------- util functions ---------------------------
- */
+// Buttons
+Bounce openButton = Bounce();
+Bounce memberButton = Bounce();
+Bounce closeButton = Bounce();
+const uint8_t debounceInterval = 2;
+Bounce *buttons[] = {&openButton, &memberButton, &closeButton};
+
+/* ---------------------------- button functions -------------------------- */
+void setupButtons() {
+  pinMode(SW_OPEN, INPUT);
+  openButton.attach(SW_OPEN);
+  openButton.interval(debounceInterval);
+
+  pinMode(SW_CLOSE, INPUT);
+  closeButton.attach(SW_CLOSE);
+  closeButton.interval(debounceInterval);
+
+  pinMode(SW_MEMBER, INPUT);
+  memberButton.attach(SW_MEMBER);
+  memberButton.interval(debounceInterval);
+}
+
+void updateButtons() {
+  for (auto btn : buttons) {
+    btn->update();
+  }
+}
+
+/* ----------------------------- util functions ------------------------- */
 void setSpaceMembersOnly() {
   state = spaceMembersOnly;
   localChange = true;
@@ -36,61 +67,14 @@ void setSpaceClosed() {
   localChange = true;
 }
 
-void setupPins() {
+void setupLEDs() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(LED_GREEN, OUTPUT);
   pinMode(LED_RED, OUTPUT);
   pinMode(LED_YELLOW, OUTPUT);
-  pinMode(SW_OPEN, INPUT);
-  pinMode(SW_MEMBER, INPUT);
-  pinMode(SW_CLOSE, INPUT);
-  pinMode(BUZZER, OUTPUT);
 }
 
-/* ----------------------------- mqtt functions --------------------------- */
-void setupMQTT() {
-  Serial.print("Connecting to MQTT broker: ");
-  Serial.println(mqttBroker);
-
-  if (!mqttClient.connect(mqttBroker, mqttPort)) {
-    Serial.print("MQTT connection failed! Error code = ");
-    Serial.println(mqttClient.connectError());
-    displayErrorLoop(LED_BUILTIN);
-  }
-
-  Serial.println("Connected to MQTT broker");
-  Serial.println();
-  digitalWrite(LED_BUILTIN, HIGH); // signal connection
-}
-
-void publishState(spaceState_t s) {
-  mqttClient.beginMessage(spaceStateTopic, true);
-  mqttClient.print(stateToString(s));
-  mqttClient.endMessage();
-}
-
-void onMqttMessage(int messageSize) {
-  Serial.print("Received a message with topic '");
-  Serial.print(mqttClient.messageTopic());
-  Serial.print("': ");
-  char msg[50] = {};
-  int p = 0;
-  while (mqttClient.available()) {
-    msg[p] = (char)mqttClient.read();
-    p++;
-  }
-  Serial.println(msg);
-  if (strcmp(msg, spaceOpenStr) == 0) {
-    state = spaceOpen;
-    Serial.println(spaceOpen);
-  } else if (strcmp(msg, spaceMembersOnlyStr) == 0) {
-    state = spaceMembersOnly;
-    Serial.println(spaceMembersOnly);
-  } else {
-    state = spaceClosed;
-    Serial.println(spaceClosed);
-  }
-}
+void setupBuzzer() { pinMode(BUZZER, OUTPUT); }
 
 /* ----------------------------- wifi functions --------------------------- */
 
@@ -100,6 +84,7 @@ void setupWifi() {
   Serial.print("Connecting to Wifi: ");
   Serial.println(wifiSSID);
 
+  WiFi.setHostname("xstate-buttons");
   WiFi.begin(wifiSSID, wifiPass);
   while (WiFi.status() != WL_CONNECTED) {
     blinkLED(LED_BUILTIN, 250);
@@ -112,20 +97,77 @@ void setupWifi() {
   Serial.println();
 }
 
+void onSelectCommand(int8_t s, HASelect *sender) {
+  if (sender == &xState) {
+    state = (spaceState_t)s;
+  }
+  sender->setState(s); // report state back to the Home Assistant
+}
+
+void setupHomeAssistant() {
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  haDevice.setUniqueId(mac, sizeof(mac));
+  haDevice.setName("xState");
+  haDevice.setSoftwareVersion("1.0.0");
+  haDevice.setManufacturer("xHain hack+makespace (gueldi)");
+  haDevice.setModel("xState-esp");
+  haDevice.enableSharedAvailability();
+  haDevice.enableLastWill();
+  xState.setRetain(true);
+  xState.setOptions(stateOptionsStr); // xHain is ...
+  xState.setIcon("mdi:door");
+  xState.onCommand(onSelectCommand);
+  if (!mqtt.begin(mqttBroker, mqttUser, mqttPass)) {
+    Serial.println("mqtt error");
+    displayErrorLoop(LED_BUILTIN);
+  }
+}
+
+void setupOTA() {
+  ArduinoOTA
+      .onStart([]() {
+        String type;
+        if (ArduinoOTA.getCommand() == U_FLASH)
+          type = "sketch";
+        else // U_SPIFFS
+          type = "filesystem";
+
+        // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS
+        // using SPIFFS.end()
+        Serial.println("Start updating " + type);
+      })
+      .onEnd([]() { Serial.println("\nEnd"); })
+      .onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+      })
+      .onError([](ota_error_t error) {
+        Serial.printf("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR)
+          Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR)
+          Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR)
+          Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR)
+          Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR)
+          Serial.println("End Failed");
+      });
+
+  ArduinoOTA.begin();
+}
+
 void setup() {
   Serial.begin(115200);
-  setupPins();
+  setupButtons();
+  setupLEDs();
+  setupBuzzer();
   setupWifi();
-  setupMQTT();
-
-  // monitor topic
-  mqttClient.onMessage(onMqttMessage);
-  mqttClient.subscribe(spaceStateTopic);
-
-  /* ------------------------------- interrupts ----------------------------- */
-  attachInterrupt(SW_OPEN, setSpaceOpen, FALLING);
-  attachInterrupt(SW_MEMBER, setSpaceMembersOnly, FALLING);
-  attachInterrupt(SW_CLOSE, setSpaceClosed, FALLING);
+  setupOTA();
+  setupHomeAssistant();
+  state = (spaceState_t)xState.getCurrentState();
+  digitalWrite(LED_BUILTIN, HIGH);
 }
 
 void updateLEDs(spaceState_t s) {
@@ -147,7 +189,7 @@ void updateLEDs(spaceState_t s) {
     break;
   }
 }
-void playSound(spaceState_t s) {
+void playBuzzer(spaceState_t s) {
   switch (s) {
   case spaceOpen:
     playOpen(BUZZER);
@@ -164,33 +206,38 @@ void playSound(spaceState_t s) {
 void outputVoice(spaceState_t s) {
   switch (s) {
   case spaceOpen:
-    audioPlayer.Play(&voiceOpen);
+    audioPlayer.Play(&voiceOpen, false);
     break;
   case spaceClosed:
-    audioPlayer.Play(&voiceClosed);
+    audioPlayer.Play(&voiceClosed, false);
     break;
   case spaceMembersOnly:
-    audioPlayer.Play(&voiceMembers);
+    audioPlayer.Play(&voiceMembers, false);
     break;
   }
 }
 
 void loop() {
-  audioPlayer.FillBuffer();
+  mqtt.loop();
+  updateButtons();
+  if (openButton.fell()) {
+    state = spaceOpen;
+  } else if (memberButton.fell()) {
+    state = spaceMembersOnly;
+  } else if (closeButton.fell()) {
+    state = spaceClosed;
+  } else {
+    state = (spaceState_t)xState.getCurrentState();
+  }
   if (lastState != state) {
     Serial.printf("Transition from %s to %s.\n", stateToString(lastState),
                   stateToString(state));
-    // check if change needs to be published
-    if (localChange) {
-      publishState(state);
-      localChange = false;
+    if (!xState.setState(state)) {
+      Serial.println("error publishing state");
     }
-    // update LEDs and play sound
-    updateLEDs(state);
-    // playSound(state);
-    outputVoice(state);
-    // store state
+    playBuzzer(state);
     lastState = state;
   }
-  mqttClient.poll();
+  updateLEDs(state);
+  ArduinoOTA.handle();
 }
