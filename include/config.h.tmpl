@@ -1,7 +1,45 @@
 #pragma once
+#include <Arduino.h>
 
-const char wifiSSID[] = "";
-const char wifiPass[] = "";
-const char mqttBroker[] = "test.mosquitto.org";
+const char wifiSSID[] = "SSID";
+const char wifiPass[] = "superscretpassword!";
+const char mqttBroker[] = "brokerURL";
 const int mqttPort = 1883;
-const char spaceStateTopic[] = "";
+const char mqttUser[] = "mqttUser";
+const char mqttPass[] = "mqttPass";
+const char stateOptionsStr[] = "open for guests;open to members;closed";
+
+// PINS
+const uint8_t SW_OPEN = GPIO_NUM_34;
+const uint8_t SW_MEMBER = GPIO_NUM_33;
+const uint8_t SW_CLOSE = GPIO_NUM_35;
+
+const uint8_t LED_RED = GPIO_NUM_32;
+const uint8_t LED_YELLOW = GPIO_NUM_25;
+const uint8_t LED_GREEN = GPIO_NUM_27;
+
+const uint8_t BUZZER = GPIO_NUM_0;
+const uint8_t DAC_PIN = GPIO_NUM_26;
+
+const uint8_t SD_CS = 5;
+const uint8_t SPI_MOSI = 23;
+const uint8_t SPI_MISO = 19;
+const uint8_t SPI_SCK = 18;
+
+// Home Assistant
+#define EX_ARDUINOHA_BINARY_SENSOR
+#define EX_ARDUINOHA_BUTTON
+#define EX_ARDUINOHA_CAMERA
+#define EX_ARDUINOHA_COVER
+#define EX_ARDUINOHA_DEVICE_TRACKER
+#define EX_ARDUINOHA_DEVICE_TRIGGER
+#define EX_ARDUINOHA_FAN
+#define EX_ARDUINOHA_HVAC
+#define EX_ARDUINOHA_LIGHT
+#define EX_ARDUINOHA_LOCK
+#define EX_ARDUINOHA_NUMBER
+#define EX_ARDUINOHA_SCENE
+// #define EX_ARDUINOHA_SELECT
+#define EX_ARDUINOHA_SENSOR
+#define EX_ARDUINOHA_SWITCH
+#define EX_ARDUINOHA_TAG_SCANNER
