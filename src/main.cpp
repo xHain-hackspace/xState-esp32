@@ -17,7 +17,8 @@ HASelect xState("xState");
 
 volatile spaceState_t state = spaceUndefined;
 volatile spaceState_t lastState = spaceUndefined;
-volatile bool localChange = false;
+enum ChangeOrigin_t { local, remote };
+volatile ChangeOrigin_t changeOrigin;
 
 // Audio
 XT_DAC_Audio_Class audioPlayer(26, 0);
@@ -56,15 +57,15 @@ void updateButtons() {
 /* ----------------------------- util functions ------------------------- */
 void setSpaceMembersOnly() {
   state = spaceMembersOnly;
-  localChange = true;
+  changeOrigin = local;
 }
 void setSpaceOpen() {
   state = spaceOpen;
-  localChange = true;
+  changeOrigin = local;
 }
 void setSpaceClosed() {
   state = spaceClosed;
-  localChange = true;
+  changeOrigin = local;
 }
 
 void setupLEDs() {
@@ -100,6 +101,7 @@ void setupWifi() {
 void onSelectCommand(int8_t s, HASelect *sender) {
   if (sender == &xState) {
     state = (spaceState_t)s;
+    changeOrigin = remote;
   }
   sender->setState(s); // report state back to the Home Assistant
 }
@@ -218,19 +220,23 @@ void outputVoice(spaceState_t s) {
   }
 }
 
+unsigned long pushButtonTime = 0;
+unsigned long buttonHoldOff = 2000;
 void loop() {
   mqtt.loop();
   updateButtons();
   if (openButton.fell()) {
     state = spaceOpen;
+    pushButtonTime = millis();
   } else if (memberButton.fell()) {
     state = spaceMembersOnly;
+    pushButtonTime = millis();
   } else if (closeButton.fell()) {
     state = spaceClosed;
-  } else {
-    state = (spaceState_t)xState.getCurrentState();
+    pushButtonTime = millis();
   }
-  if (lastState != state) {
+
+  if (lastState != state && (millis() - pushButtonTime >= buttonHoldOff)) {
     Serial.printf("Transition from %s to %s.\n", stateToString(lastState),
                   stateToString(state));
     if (!xState.setState(state)) {
